@@ -1,7 +1,24 @@
 (async function () {
-  const GITHUB_TOKEN = "PASTE_TOKEN_MOI_VAO_DAY";
+  const GITHUB_TOKEN = "aaaaaaaaaaaaaa";
   const OWNER = "vusown";
   const REPO = "Nh-t-ki-m-b-thi-n";
+
+  const DELAY_MS = 0;
+  const MAX_CHAPTERS = 3000;
+
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+  const cleanText = text => (text || "")
+    .replace(/\u00a0/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/[ \t]+/g, " ")
+    .trim();
+
+  const abs = url => url ? new URL(url, location.origin).href : null;
+
+  function b64(str) {
+    return btoa(unescape(encodeURIComponent(str)));
+  }
 
   async function gh(url, options = {}) {
     const res = await fetch(url, {
@@ -24,20 +41,16 @@
     return data;
   }
 
-  function b64(str) {
-    return btoa(unescape(encodeURIComponent(str)));
-  }
-
   async function getDefaultBranch() {
     const repo = await gh(`https://api.github.com/repos/${OWNER}/${REPO}`);
-    console.log("Default branch:", repo.default_branch);
     return repo.default_branch;
   }
 
   async function uploadFile(path, content, branch) {
-    const url = `https://api.github.com/repos/${OWNER}/${REPO}/contents/${path}`;
+    const apiUrl =
+      `https://api.github.com/repos/${OWNER}/${REPO}/contents/${encodeURIComponent(path).replace(/%2F/g, "/")}`;
 
-    const data = await gh(url, {
+    const data = await gh(apiUrl, {
       method: "PUT",
       body: JSON.stringify({
         message: `Upload ${path}`,
@@ -50,14 +63,126 @@
     return data.content.html_url;
   }
 
-  const branch = await getDefaultBranch();
+  function getData(doc) {
+    const bookTitle =
+      doc.querySelector(".current-book")?.innerText?.trim() ||
+      "metruyenchu";
 
-  // Test upload file nhỏ trước
+    const chapterTitle =
+      doc.querySelector(".current-chapter")?.innerText?.trim() ||
+      doc.title ||
+      "Unknown Chapter";
+
+    const content = cleanText(
+      doc.querySelector(".truyen")?.innerText || ""
+    );
+
+    const nextUrl = abs(
+      doc.querySelector(".control-last .chapter_control a.next")?.getAttribute("href") ||
+      doc.querySelector("#gotochap a.next")?.getAttribute("href")
+    );
+
+    return { bookTitle, chapterTitle, content, nextUrl };
+  }
+
+  async function fetchChapter(url) {
+    console.log("Fetching:", url);
+
+    const res = await fetch(url, {
+      credentials: "include",
+      cache: "no-store"
+    });
+
+    if (!res.ok) throw new Error(`Fetch chapter failed HTTP ${res.status}`);
+
+    const html = await res.text();
+    const doc = new DOMParser().parseFromString(html, "text/html");
+
+    return getData(doc);
+  }
+
+  function safeFileName(name) {
+    return (name || "unknown")
+      .replace(/[\\/:*?"<>|]/g, "_")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function getChapterFileName(chapterTitle, count) {
+    const matched = chapterTitle.match(/Chương\s+\d+/i);
+    if (matched) return safeFileName(matched[0]) + ".txt";
+    return safeFileName(`Chương ${count}`) + ".txt";
+  }
+
+  async function uploadSingleChapter(data, count, branch, bookTitle) {
+    const safeBookName = safeFileName(bookTitle);
+    const fileName = getChapterFileName(data.chapterTitle, count);
+    const path = `novels/${safeBookName}/${fileName}`;
+
+    const text =
+      `${data.chapterTitle}\n\n` +
+      `${data.content}\n`;
+
+    return await uploadFile(path, text, branch);
+  }
+
+  const branch = await getDefaultBranch();
+  console.log("Branch:", branch);
+
+  let url = location.href;
+  let visited = new Set();
+  let bookTitle = "metruyenchu";
+  let count = 0;
+  let uploadedUrls = [];
+
+  console.log("=== START FAST CRAWL + UPLOAD EACH CHAPTER ===");
+
+  while (url && !visited.has(url) && count < MAX_CHAPTERS) {
+    visited.add(url);
+
+    const data =
+      count === 0
+        ? getData(document)
+        : await fetchChapter(url);
+
+    if (!data.content) {
+      console.log("Stop: no content");
+      break;
+    }
+
+    bookTitle = data.bookTitle || bookTitle;
+    count++;
+
+    console.log(`Chapter ${count}: ${data.chapterTitle}`);
+
+    const uploadedUrl = await uploadSingleChapter(data, count, branch, bookTitle);
+    uploadedUrls.push(uploadedUrl);
+
+    if (!data.nextUrl || visited.has(data.nextUrl)) {
+      console.log("No next chapter. Stop.");
+      break;
+    }
+
+    url = data.nextUrl;
+
+    if (DELAY_MS > 0) {
+      await sleep(DELAY_MS);
+    }
+  }
+
+  const safeBookName = safeFileName(bookTitle);
+
+  const indexText =
+    `Book: ${bookTitle}\n` +
+    `Total chapters crawled: ${count}\n\n` +
+    uploadedUrls.join("\n");
+
   await uploadFile(
-    `test-upload-${Date.now()}.txt`,
-    "GitHub upload test OK",
+    `novels/${safeBookName}/index.txt`,
+    indexText,
     branch
   );
 
-  alert("Upload test OK. Repo/token/branch dùng được.");
+  console.log("DONE");
+  alert(`Đã crawl và upload ${count} chương lên GitHub.`);
 })();
