@@ -1,146 +1,63 @@
-lockdown-install.js:1 SES Removing unpermitted intrinsics
-chuong-462-4oqt80tWhL2i:246  GET https://jn.unfretarara.com/t3xSzQ5KOGu6m/118684 net::ERR_BLOCKED_BY_CLIENT
 (async function () {
-  const GITHUB_TOKEN = "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";
+  const GITHUB_TOKEN = "PASTE_TOKEN_MOI_VAO_DAY";
   const OWNER = "vusown";
   const REPO = "Nh-t-ki-m-b-thi-n";
-  const BRANCH = "main";
 
-  const DELAY_MS = 1000;
-  const MAX_CHAPTERS = 3000;
-
-  const sleep = ms => new Promise(r => setTimeout(r, ms));
-
-  const cleanText = text => (text || "")
-    .replace(/\u00a0/g, " ")
-    .replace(/\n{3,}/g, "\n\n")
-    .replace(/[ \t]+/g, " ")
-    .trim();
-
-  const abs = url => url ? new URL(url, location.origin).href : null;
-
-  function getData(doc) {
-    const bookTitle =
-      doc.querySelector(".current-book")?.innerText?.trim() ||
-      "metruyenchu";
-
-    const chapterTitle =
-      doc.querySelector(".current-chapter")?.innerText?.trim() ||
-      doc.title ||
-      "Unknown Chapter";
-
-    const content = cleanText(
-      doc.querySelector(".truyen")?.innerText || ""
-    );
-
-    const nextUrl = abs(
-      doc.querySelector(".control-last .chapter_control a.next")?.getAttribute("href") ||
-      doc.querySelector("#gotochap a.next")?.getAttribute("href")
-    );
-
-    return { bookTitle, chapterTitle, content, nextUrl };
-  }
-
-  async function fetchChapter(url) {
-    console.log("Fetching:", url);
-
+  async function gh(url, options = {}) {
     const res = await fetch(url, {
-      credentials: "include",
-      cache: "no-store"
+      ...options,
+      headers: {
+        Authorization: `Bearer ${GITHUB_TOKEN}`,
+        Accept: "application/vnd.github+json",
+        "Content-Type": "application/json",
+        ...(options.headers || {})
+      }
     });
 
-    if (!res.ok) throw new Error(`Fetch failed HTTP ${res.status}`);
+    const data = await res.json().catch(() => null);
 
-    const html = await res.text();
-    const doc = new DOMParser().parseFromString(html, "text/html");
+    if (!res.ok) {
+      console.error("GitHub API error:", res.status, data);
+      throw new Error(`${res.status}: ${data?.message || "GitHub API error"}`);
+    }
 
-    return getData(doc);
+    return data;
   }
 
-  function toBase64Utf8(str) {
+  function b64(str) {
     return btoa(unescape(encodeURIComponent(str)));
   }
 
-  async function uploadToGitHub(filename, content) {
-    const path = `novels/${filename}`;
-    const apiUrl =
-      `https://api.github.com/repos/${OWNER}/${REPO}/contents/${path}`;
+  async function getDefaultBranch() {
+    const repo = await gh(`https://api.github.com/repos/${OWNER}/${REPO}`);
+    console.log("Default branch:", repo.default_branch);
+    return repo.default_branch;
+  }
 
-    const res = await fetch(apiUrl, {
+  async function uploadFile(path, content, branch) {
+    const url = `https://api.github.com/repos/${OWNER}/${REPO}/contents/${path}`;
+
+    const data = await gh(url, {
       method: "PUT",
-      headers: {
-        "Authorization": `Bearer ${GITHUB_TOKEN}`,
-        "Accept": "application/vnd.github+json",
-        "Content-Type": "application/json"
-      },
       body: JSON.stringify({
-        message: `Upload ${filename}`,
-        content: toBase64Utf8(content),
-        branch: BRANCH
+        message: `Upload ${path}`,
+        content: b64(content),
+        branch
       })
     });
 
-    const data = await res.json();
-
-    if (!res.ok) {
-      console.error(data);
-      throw new Error(data.message || `Upload failed HTTP ${res.status}`);
-    }
-
+    console.log("Uploaded:", data.content.html_url);
     return data.content.html_url;
   }
 
-  let url = location.href;
-  let visited = new Set();
-  let result = "";
-  let count = 0;
-  let bookTitle = "metruyenchu";
+  const branch = await getDefaultBranch();
 
-  console.log("=== START CRAWL ===");
+  // Test upload file nhỏ trước
+  await uploadFile(
+    `test-upload-${Date.now()}.txt`,
+    "GitHub upload test OK",
+    branch
+  );
 
-  while (url && !visited.has(url) && count < MAX_CHAPTERS) {
-    visited.add(url);
-
-    const data =
-      count === 0
-        ? getData(document)
-        : await fetchChapter(url);
-
-    if (!data.content) {
-      console.log("Stop: no content");
-      break;
-    }
-
-    bookTitle = data.bookTitle || bookTitle;
-    count++;
-
-    console.log(`Chapter ${count}: ${data.chapterTitle}`);
-
-    result +=
-      `${data.chapterTitle}\n\n` +
-      `${data.content}\n\n` +
-      `${"=".repeat(80)}\n\n`;
-
-    if (!data.nextUrl || visited.has(data.nextUrl)) {
-      console.log("No next chapter. Stop.");
-      break;
-    }
-
-    url = data.nextUrl;
-    await sleep(DELAY_MS);
-  }
-
-  if (!result) {
-    alert("Không lấy được nội dung truyện");
-    return;
-  }
-
-  const safeName = bookTitle.replace(/[\\/:*?"<>|]/g, "_");
-  const fileName = `${safeName}_${Date.now()}.txt`;
-
-  console.log("Uploading to GitHub...");
-  const uploadedUrl = await uploadToGitHub(fileName, result);
-
-  console.log("Uploaded:", uploadedUrl);
-  alert(`Đã crawl ${count} chương và upload:\n${uploadedUrl}`);
+  alert("Upload test OK. Repo/token/branch dùng được.");
 })();
